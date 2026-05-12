@@ -1,10 +1,15 @@
 require('dotenv').config();
-const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, REST, Routes } = require('discord.js');
+const { Client, GatewayIntentBits, Events, ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, REST, Routes, MessageFlags } = require('discord.js');
 const { Rcon } = require('rcon-client');
 const { initDb, db } = require('./database');
 const commands = require('./commands');
+const { promisify } = require('util');
 
 const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages] });
+
+// Promisify DB calls
+const dbGet = promisify(db.get).bind(db);
+const dbRun = promisify(db.run).bind(db);
 
 // Inicializar Banco de Dados
 initDb();
@@ -21,7 +26,7 @@ const rest = new REST({ version: '10' }).setToken(process.env.DISCORD_TOKEN);
         );
         console.log('Comandos Slash registrados com sucesso!');
     } catch (error) {
-        console.error(error);
+        console.error('Erro ao registrar comandos:', error);
     }
 })();
 
@@ -31,63 +36,65 @@ client.once(Events.ClientReady, c => {
 
 // Handler de Interações
 client.on(Events.InteractionCreate, async interaction => {
-    if (interaction.isChatInputCommand()) {
-        const { commandName, options, subcommand } = interaction;
+    console.log(`Interação recebida: ${interaction.customId || interaction.commandName} de ${interaction.user.tag}`);
+    try {
+        if (interaction.isChatInputCommand()) {
+            // ... (resto do código igual)
 
-        if (commandName === 'ficha') {
-            const subcommand = options.getSubcommand();
+            if (commandName === 'ficha') {
+                const subcommand = options.getSubcommand();
 
-            if (subcommand === 'criar') {
-                const modal = new ModalBuilder()
-                    .setCustomId('ficha_modal_1')
-                    .setTitle('Criação de Ficha - Passo 1');
+                if (subcommand === 'criar') {
+                    const modal = new ModalBuilder()
+                        .setCustomId('ficha_modal_1')
+                        .setTitle('Criação de Ficha - Passo 1');
 
-                const nickInput = new TextInputBuilder()
-                    .setCustomId('mc_nick')
-                    .setLabel("Seu Nick no Minecraft")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true);
+                    const nickInput = new TextInputBuilder()
+                        .setCustomId('mc_nick')
+                        .setLabel("Seu Nick no Minecraft")
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true);
 
-                const nameInput = new TextInputBuilder()
-                    .setCustomId('char_name')
-                    .setLabel("Nome do Personagem")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true);
+                    const nameInput = new TextInputBuilder()
+                        .setCustomId('char_name')
+                        .setLabel("Nome do Personagem")
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true);
 
-                const kingdomInput = new TextInputBuilder()
-                    .setCustomId('kingdom')
-                    .setLabel("Reino")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true);
+                    const kingdomInput = new TextInputBuilder()
+                        .setCustomId('kingdom')
+                        .setLabel("Reino")
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true);
 
-                const originInput = new TextInputBuilder()
-                    .setCustomId('origin')
-                    .setLabel("Origem (Raça)")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true);
+                    const originInput = new TextInputBuilder()
+                        .setCustomId('origin')
+                        .setLabel("Origem (Raça)")
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true);
 
-                const functionInput = new TextInputBuilder()
-                    .setCustomId('function')
-                    .setLabel("Função")
-                    .setStyle(TextInputStyle.Short)
-                    .setRequired(true);
+                    const functionInput = new TextInputBuilder()
+                        .setCustomId('function')
+                        .setLabel("Função")
+                        .setStyle(TextInputStyle.Short)
+                        .setRequired(true);
 
-                modal.addComponents(
-                    new ActionRowBuilder().addComponents(nickInput),
-                    new ActionRowBuilder().addComponents(nameInput),
-                    new ActionRowBuilder().addComponents(kingdomInput),
-                    new ActionRowBuilder().addComponents(originInput),
-                    new ActionRowBuilder().addComponents(functionInput)
-                );
+                    modal.addComponents(
+                        new ActionRowBuilder().addComponents(nickInput),
+                        new ActionRowBuilder().addComponents(nameInput),
+                        new ActionRowBuilder().addComponents(kingdomInput),
+                        new ActionRowBuilder().addComponents(originInput),
+                        new ActionRowBuilder().addComponents(functionInput)
+                    );
 
-                await interaction.showModal(modal);
-            }
+                    await interaction.showModal(modal);
+                }
 
-            if (subcommand === 'ver') {
-                const targetUser = options.getUser('usuario') || interaction.user;
-                db.get(`SELECT * FROM characters WHERE userId = ?`, [targetUser.id], (err, row) => {
-                    if (err) return interaction.reply({ content: 'Erro ao buscar ficha.', ephemeral: true });
-                    if (!row) return interaction.reply({ content: 'Nenhuma ficha encontrada para este usuário.', ephemeral: true });
+                if (subcommand === 'ver') {
+                    const targetUser = options.getUser('usuario') || interaction.user;
+                    const row = await dbGet(`SELECT * FROM characters WHERE userId = ?`, [targetUser.id]);
+                    
+                    if (!row) return interaction.reply({ content: 'Nenhuma ficha encontrada para este usuário.', flags: [MessageFlags.Ephemeral] });
 
                     const embed = new EmbedBuilder()
                         .setTitle(`Ficha de ${row.charName}`)
@@ -103,77 +110,111 @@ client.on(Events.InteractionCreate, async interaction => {
                         )
                         .setThumbnail(targetUser.displayAvatarURL());
 
-                    interaction.reply({ embeds: [embed] });
-                });
+                    await interaction.reply({ embeds: [embed] });
+                }
+
+                if (subcommand === 'editar') {
+                    const row = await dbGet(`SELECT * FROM characters WHERE userId = ?`, [interaction.user.id]);
+                    if (!row) return interaction.reply({ content: 'Você ainda não tem uma ficha para editar. Use `/ficha criar`.', flags: [MessageFlags.Ephemeral] });
+
+                    const modal = new ModalBuilder()
+                        .setCustomId('ficha_modal_1')
+                        .setTitle('Editar Ficha - Passo 1');
+
+                    const nickInput = new TextInputBuilder()
+                        .setCustomId('mc_nick')
+                        .setLabel("Seu Nick no Minecraft")
+                        .setStyle(TextInputStyle.Short)
+                        .setValue(row.minecraftNick)
+                        .setRequired(true);
+
+                    const nameInput = new TextInputBuilder()
+                        .setCustomId('char_name')
+                        .setLabel("Nome do Personagem")
+                        .setStyle(TextInputStyle.Short)
+                        .setValue(row.charName)
+                        .setRequired(true);
+
+                    const kingdomInput = new TextInputBuilder()
+                        .setCustomId('kingdom')
+                        .setLabel("Reino")
+                        .setStyle(TextInputStyle.Short)
+                        .setValue(row.kingdom)
+                        .setRequired(true);
+
+                    const originInput = new TextInputBuilder()
+                        .setCustomId('origin')
+                        .setLabel("Origem (Raça)")
+                        .setStyle(TextInputStyle.Short)
+                        .setValue(row.origin)
+                        .setRequired(true);
+
+                    const functionInput = new TextInputBuilder()
+                        .setCustomId('function')
+                        .setLabel("Função")
+                        .setStyle(TextInputStyle.Short)
+                        .setValue(row.function)
+                        .setRequired(true);
+
+                    modal.addComponents(
+                        new ActionRowBuilder().addComponents(nickInput),
+                        new ActionRowBuilder().addComponents(nameInput),
+                        new ActionRowBuilder().addComponents(kingdomInput),
+                        new ActionRowBuilder().addComponents(originInput),
+                        new ActionRowBuilder().addComponents(functionInput)
+                    );
+
+                    await interaction.showModal(modal);
+                }
+
+                if (subcommand === 'deletar') {
+                    await dbRun(`DELETE FROM characters WHERE userId = ?`, [interaction.user.id]);
+                    await interaction.reply({ content: 'Sua ficha foi deletada.', flags: [MessageFlags.Ephemeral] });
+                }
+                
+                if (subcommand === 'imagem') {
+                    const imagePath = './template_ficha.png'; 
+                    await interaction.reply({ 
+                        content: 'Aqui está o template da ficha para preenchimento manual:', 
+                        files: [imagePath],
+                        flags: [MessageFlags.Ephemeral] 
+                    }).catch(() => {
+                        interaction.reply({ content: 'O arquivo `template_ficha.png` não foi encontrado na pasta do bot.', flags: [MessageFlags.Ephemeral] });
+                    });
+                }
             }
 
-            if (subcommand === 'deletar') {
-                db.run(`DELETE FROM characters WHERE userId = ?`, [interaction.user.id], function(err) {
-                    if (err) return interaction.reply({ content: 'Erro ao deletar ficha.', ephemeral: true });
-                    interaction.reply({ content: 'Sua ficha foi deletada.', ephemeral: true });
-                });
+            if (commandName === 'regras') {
+                const embed = new EmbedBuilder()
+                    .setTitle('Regras do Servidor')
+                    .setDescription('1. Respeite todos os jogadores.\n2. Sem griefing.\n3. Roleplay obrigatório.')
+                    .setColor(0x0099FF);
+                await interaction.reply({ embeds: [embed] });
             }
-            
-            if (subcommand === 'imagem') {
-                interaction.reply({ content: 'Aqui está o template da ficha (Em desenvolvimento: anexe a imagem aqui no futuro).', ephemeral: true });
+
+            if (commandName === 'lore') {
+                const embed = new EmbedBuilder()
+                    .setTitle('Lore do Mundo')
+                    .setDescription('Há muito tempo, os reinos viviam em paz...')
+                    .setColor(0xAA00FF);
+                await interaction.reply({ embeds: [embed] });
             }
         }
 
-        if (commandName === 'regras') {
-            const embed = new EmbedBuilder()
-                .setTitle('Regras do Servidor')
-                .setDescription('1. Respeite todos os jogadores.\n2. Sem griefing.\n3. Roleplay obrigatório.')
-                .setColor(0x0099FF);
-            interaction.reply({ embeds: [embed] });
-        }
+        // Handler de Submissão de Modal
+            if (interaction.isModalSubmit()) {
+                if (interaction.customId === 'ficha_modal_1') {
+                    await interaction.deferReply({ flags: [MessageFlags.Ephemeral] }); // Agradece o Discord imediatamente
 
-        if (commandName === 'lore') {
-            const embed = new EmbedBuilder()
-                .setTitle('Lore do Mundo')
-                .setDescription('Há muito tempo, os reinos viviam em paz...')
-                .setColor(0xAA00FF);
-            interaction.reply({ embeds: [embed] });
-        }
-    }
+                    const mcNick = interaction.fields.getTextInputValue('mc_nick');
+                    const charName = interaction.fields.getTextInputValue('char_name');
+                    const kingdom = interaction.fields.getTextInputValue('kingdom');
+                    const origin = interaction.fields.getTextInputValue('origin');
+                    const func = interaction.fields.getTextInputValue('function');
 
-    // Handler de Submissão de Modal
-    if (interaction.isModalSubmit()) {
-        if (interaction.customId === 'ficha_modal_1') {
-            const mcNick = interaction.fields.getTextInputValue('mc_nick');
-            const charName = interaction.fields.getTextInputValue('char_name');
-            const kingdom = interaction.fields.getTextInputValue('kingdom');
-            const origin = interaction.fields.getTextInputValue('origin');
-            const func = interaction.fields.getTextInputValue('function');
+                    await dbRun(`INSERT OR REPLACE INTO characters (userId, minecraftNick, charName, kingdom, origin, function, status) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`,
+                        [interaction.user.id, mcNick, charName, kingdom, origin, func]);
 
-            // Salvar temporariamente ou pedir o passo 2
-            const modal2 = new ModalBuilder()
-                .setCustomId('ficha_modal_2')
-                .setTitle('Criação de Ficha - Passo 2');
-
-            const loreInput = new TextInputBuilder()
-                .setCustomId('lore')
-                .setLabel("Lore (História)")
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true);
-
-            const skillsInput = new TextInputBuilder()
-                .setCustomId('skills')
-                .setLabel("Skills (Características)")
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true);
-
-            modal2.addComponents(
-                new ActionRowBuilder().addComponents(loreInput),
-                new ActionRowBuilder().addComponents(skillsInput)
-            );
-
-            // Armazenar os dados do passo 1 em um objeto global temporário ou via botões.
-            // Para simplicidade neste script, vamos salvar os dados do passo 1 e depois dar UPDATE no passo 2.
-            db.run(`INSERT OR REPLACE INTO characters (userId, minecraftNick, charName, kingdom, origin, function, status) VALUES (?, ?, ?, ?, ?, ?, 'PENDING')`,
-                [interaction.user.id, mcNick, charName, kingdom, origin, func],
-                async function(err) {
-                    if (err) return interaction.reply({ content: 'Erro ao salvar passo 1.', ephemeral: true });
-                    
                     const row = new ActionRowBuilder()
                         .addComponents(
                             new ButtonBuilder()
@@ -182,24 +223,22 @@ client.on(Events.InteractionCreate, async interaction => {
                                 .setStyle(ButtonStyle.Primary),
                         );
 
-                    await interaction.reply({ content: 'Passo 1 concluído! Clique no botão abaixo para finalizar sua ficha.', components: [row], ephemeral: true });
+                    await interaction.editReply({ content: 'Passo 1 concluído! Clique no botão abaixo para finalizar sua ficha.', components: [row] });
                 }
-            );
-        }
 
-        if (interaction.customId === 'ficha_modal_2') {
-            const lore = interaction.fields.getTextInputValue('lore');
-            const skills = interaction.fields.getTextInputValue('skills');
+                if (interaction.customId === 'ficha_modal_2') {
+                    await interaction.deferReply({ flags: [MessageFlags.Ephemeral] });
 
-            db.run(`UPDATE characters SET lore = ?, skills = ? WHERE userId = ?`, [lore, skills, interaction.user.id], function(err) {
-                if (err) return interaction.reply({ content: 'Erro ao finalizar ficha.', ephemeral: true });
-                
-                interaction.reply({ content: 'Ficha enviada para aprovação!', ephemeral: true });
+                    const lore = interaction.fields.getTextInputValue('lore');
+                    const skills = interaction.fields.getTextInputValue('skills');
 
-                // Enviar para o canal de aprovação
-                const approvalChannel = client.channels.cache.get(process.env.APPROVAL_CHANNEL_ID);
-                if (approvalChannel) {
-                    db.get(`SELECT * FROM characters WHERE userId = ?`, [interaction.user.id], (err, row) => {
+                    await dbRun(`UPDATE characters SET lore = ?, skills = ? WHERE userId = ?`, [lore, skills, interaction.user.id]);
+
+                    await interaction.editReply({ content: 'Ficha enviada para aprovação!' });
+
+                    const approvalChannel = client.channels.cache.get(process.env.APPROVAL_CHANNEL_ID);
+                    if (approvalChannel) {
+                        const row = await dbGet(`SELECT * FROM characters WHERE userId = ?`, [interaction.user.id]);
                         const embed = new EmbedBuilder()
                             .setTitle(`Nova Ficha Pendente: ${row.charName}`)
                             .addFields(
@@ -216,73 +255,83 @@ client.on(Events.InteractionCreate, async interaction => {
                                 new ButtonBuilder().setCustomId(`reject_${row.userId}`).setLabel('Recusar').setStyle(ButtonStyle.Danger)
                             );
 
-                        approvalChannel.send({ embeds: [embed], components: [buttons] });
-                    });
+                        await approvalChannel.send({ embeds: [embed], components: [buttons] });
+                    }
                 }
-            });
-        }
-    }
+            }
 
-    // Handler de Botões
-    if (interaction.isButton()) {
-        if (interaction.customId === 'abrir_modal_2') {
-            const modal2 = new ModalBuilder()
-                .setCustomId('ficha_modal_2')
-                .setTitle('Criação de Ficha - Passo 2');
+            // Handler de Botões
+            if (interaction.isButton()) {
+                if (interaction.customId === 'abrir_modal_2') {
+                    // Nota: showModal DEVE ser a primeira resposta, não pode usar defer.
+                    // Para evitar erro, criamos o modal antes de qualquer outra lógica.
+                    const modal2 = new ModalBuilder()
+                        .setCustomId('ficha_modal_2')
+                        .setTitle('Criação de Ficha - Passo 2');
 
-            const loreInput = new TextInputBuilder()
-                .setCustomId('lore')
-                .setLabel("Lore (História)")
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true);
+                    const loreInput = new TextInputBuilder()
+                        .setCustomId('lore')
+                        .setLabel("Lore (História)")
+                        .setStyle(TextInputStyle.Paragraph)
+                        .setRequired(true);
 
-            const skillsInput = new TextInputBuilder()
-                .setCustomId('skills')
-                .setLabel("Skills (Características)")
-                .setStyle(TextInputStyle.Paragraph)
-                .setRequired(true);
+                    const skillsInput = new TextInputBuilder()
+                        .setCustomId('skills')
+                        .setLabel("Skills (Características)")
+                        .setStyle(TextInputStyle.Paragraph)
+                        .setRequired(true);
 
-            modal2.addComponents(
-                new ActionRowBuilder().addComponents(loreInput),
-                new ActionRowBuilder().addComponents(skillsInput)
-            );
+                    modal2.addComponents(
+                        new ActionRowBuilder().addComponents(loreInput),
+                        new ActionRowBuilder().addComponents(skillsInput)
+                    );
 
-            await interaction.showModal(modal2);
-        }
-
-        if (interaction.customId.startsWith('approve_')) {
-            const userId = interaction.customId.split('_')[1];
-            
-            db.get(`SELECT * FROM characters WHERE userId = ?`, [userId], async (err, row) => {
-                if (!row) return interaction.reply({ content: 'Ficha não encontrada.', ephemeral: true });
-
-                // Tentar RCON
-                try {
-                    const rcon = await Rcon.connect({
-                        host: process.env.RCON_HOST,
-                        port: parseInt(process.env.RCON_PORT),
-                        password: process.env.RCON_PASSWORD,
-                    });
-                    await rcon.send(`whitelist add ${row.minecraftNick}`);
-                    await rcon.end();
-
-                    db.run(`UPDATE characters SET status = 'APPROVED' WHERE userId = ?`, [userId]);
-                    
-                    await interaction.update({ content: `✅ Ficha de <@${userId}> aprovada e adicionada à whitelist!`, embeds: [], components: [] });
-                    
-                    const user = await client.users.fetch(userId);
-                    user.send("Sua ficha foi aprovada! Você já pode entrar no servidor.");
-                } catch (rconErr) {
-                    console.error('Erro RCON:', rconErr);
-                    interaction.reply({ content: 'Erro ao conectar ao RCON do Minecraft. Verifique se o servidor está online.', ephemeral: true });
+                    await interaction.showModal(modal2);
                 }
-            });
-        }
 
-        if (interaction.customId.startsWith('reject_')) {
-            const userId = interaction.customId.split('_')[1];
-            db.run(`DELETE FROM characters WHERE userId = ?`, [userId]);
-            await interaction.update({ content: `❌ Ficha de <@${userId}> recusada e removida.`, embeds: [], components: [] });
+                if (interaction.customId.startsWith('approve_')) {
+                    if (interaction.deferred || interaction.replied) return;
+                    await interaction.deferUpdate(); 
+
+                    const userId = interaction.customId.split('_')[1];
+                    const row = await dbGet(`SELECT * FROM characters WHERE userId = ?`, [userId]);
+
+                    if (!row) return interaction.followUp({ content: 'Ficha não encontrada.', flags: [MessageFlags.Ephemeral] });
+
+                    try {
+                        console.log(`Tentando RCON para aprovar: ${row.minecraftNick}`);
+                        const rcon = await Rcon.connect({
+                            host: process.env.RCON_HOST,
+                            port: parseInt(process.env.RCON_PORT),
+                            password: process.env.RCON_PASSWORD,
+                        });
+                        await rcon.send(`whitelist add ${row.minecraftNick}`);
+                        await rcon.end();
+                        console.log(`RCON Sucesso: Whitelist add ${row.minecraftNick}`);
+
+                        await dbRun(`UPDATE characters SET status = 'APPROVED' WHERE userId = ?`, [userId]);
+                        await interaction.editReply({ content: `✅ Ficha de <@${userId}> aprovada e adicionada à whitelist!`, embeds: [], components: [] });
+
+                        const user = await client.users.fetch(userId);
+                        await user.send("Sua ficha foi aprovada! Você já pode entrar no servidor.");
+                    } catch (rconErr) {
+                        console.error('Erro RCON:', rconErr);
+                        await interaction.followUp({ content: 'Erro ao conectar ao RCON do Minecraft. Verifique se o servidor está online.', flags: [MessageFlags.Ephemeral] });
+                    }
+                    return;
+                }
+                if (interaction.customId.startsWith('reject_')) {
+                    await interaction.deferUpdate();
+                    const userId = interaction.customId.split('_')[1];
+                    await dbRun(`DELETE FROM characters WHERE userId = ?`, [userId]);
+                    await interaction.editReply({ content: `❌ Ficha de <@${userId}> recusada e removida.`, embeds: [], components: [] });
+                }
+            }    } catch (error) {
+        console.error('Erro na interação:', error);
+        if (interaction.replied || interaction.deferred) {
+            await interaction.followUp({ content: 'Ocorreu um erro ao processar esta ação.', flags: [MessageFlags.Ephemeral] }).catch(() => {});
+        } else {
+            await interaction.reply({ content: 'Ocorreu um erro ao processar esta ação.', flags: [MessageFlags.Ephemeral] }).catch(() => {});
         }
     }
 });
