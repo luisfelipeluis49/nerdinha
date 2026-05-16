@@ -13,11 +13,11 @@ Focado no Roleplay e gerenciamento de jogadores.
 - **Canal:** Deve ser usado exclusivamente no `#minecraft-rp`.
 - **Whitelist:** Gerencia a aprovação de novos jogadores via RCON.
 
-### 2. Bot Nerdinha (Skoice e Logs)
+### 2. Nerdinha (Skoice e Logs)
 Focado na infraestrutura e comunicação técnica.
-- **Arquivo:** `nerdinha.js`
+- **Gerenciado por:** Plugin `EssentialsX Discord` (In-game).
 - **Skoice:** Integração com o sistema de voz por proximidade.
-- **Logs:** Monitora o `latest.log` e envia notificações de entrada/saída/morte no canal `#minecraft-logs`.
+- **Logs:** Envia notificações de entrada/saída/morte no canal `#minecraft-logs`.
 - **Chat Sincronizado:** Ponte de chat entre o canal `#minecraft` do Discord e o servidor In-game.
 
 ## 🛠️ Configuração
